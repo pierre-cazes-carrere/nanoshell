@@ -1,47 +1,106 @@
-#include "../include/nanoshell.h"
+#include "../include/exec.h"
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
 
-/*
- * exec_find_in_path: Search for an executable in PATH
- * Returns: allocated string with full path, or NULL if not found
- * The caller must free the returned string
- */
-char *exec_find_in_path(const char *cmd)
+char *resolve_cmd(const char *cmd, char **envp)
 {
-	char *path_env;
-	char *path_copy;
-	char *dir;
-	char full_path[MAX_LINE_LENGTH];
-	struct stat st;
+	char	*path;
+	char	*path_env;
+	char	*path_copy;
+	char	*dir;
+	char	*full_path;
+	size_t	cmd_len;
+	size_t	dir_len;
 
 	if (!cmd)
 		return (NULL);
 
-	/* TODO: Implement PATH search using strtok on PATH environment variable */
-	/* TODO: For each directory in PATH, construct full_path = dir + "/" + cmd */
-	/* TODO: Check if full_path is executable using stat() or access() */
-	/* TODO: Return first match found, or NULL if none found */
+	if (strchr(cmd, '/'))
+	{
+		if (access(cmd, X_OK) == 0)
+			return (strdup(cmd));
+		return (NULL);
+	}
 
+	path_env = getenv("PATH");
+	if (!path_env)
+		return (NULL);
+
+	path_copy = strdup(path_env);
+	if (!path_copy)
+		return (NULL);
+
+	cmd_len = strlen(cmd);
+	dir = strtok(path_copy, ":");
+
+	while (dir)
+	{
+		dir_len = strlen(dir);
+		full_path = malloc(dir_len + 1 + cmd_len + 1);
+		if (!full_path)
+		{
+			free(path_copy);
+			return (NULL);
+		}
+
+		strcpy(full_path, dir);
+		strcat(full_path, "/");
+		strcat(full_path, cmd);
+
+		if (access(full_path, X_OK) == 0)
+		{
+			free(path_copy);
+			return (full_path);
+		}
+
+		free(full_path);
+		dir = strtok(NULL, ":");
+	}
+
+	free(path_copy);
 	return (NULL);
 }
 
-/*
- * exec_execute: Execute a command via fork/execve/waitpid
- * Handles both relative/absolute paths and PATH search
- */
-void exec_execute(const char *cmd, char **argv)
+int execute_external(char **argv, char **envp)
 {
-	pid_t pid;
-	int status;
-	char *full_path;
+	char	*path;
+	pid_t	pid;
+	int		status;
 
-	if (!cmd)
-		return;
+	if (!argv || !argv[0])
+		return (0);
 
-	/* TODO: If cmd contains '/', use it as-is (relative or absolute path) */
-	/* TODO: Otherwise, search in PATH using exec_find_in_path() */
-	/* TODO: If not found, print "nanoshell: weird, <cmd> is not here... :/" */
-	/* TODO: Fork a child process */
-	/* TODO: In child: execve(full_path, argv, environ) */
-	/* TODO: In parent: waitpid() for child completion */
-	/* TODO: Free allocated memory (full_path if needed) */
+	path = resolve_cmd(argv[0], envp);
+	if (!path)
+	{
+		fprintf(stderr, "nanoshell: weird, %s is not here... :/\n", argv[0]);
+		return (127);
+	}
+
+	pid = fork();
+	if (pid == -1)
+	{
+		perror("fork");
+		free(path);
+		return (1);
+	}
+
+	if (pid == 0)
+	{
+		execve(path, argv, envp);
+		perror("execve");
+		_exit(1);
+	}
+
+	free(path);
+	waitpid(pid, &status, 0);
+
+	if (WIFEXITED(status))
+		return (WEXITSTATUS(status));
+
+	return (0);
 }
